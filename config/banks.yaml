@@ -1,0 +1,14 @@
+# 银行流水列映射配置。用法：
+#   wallet import 招行流水.csv --format generic --bank cmb_debit
+#
+# 先把银行导出的 CSV 打开看一眼表头，照着填即可。
+
+cmb_debit:                       # 招商银行借记卡（示例，按实际导出格式调整）
+  header_starts_with: 交易日期
+  columns:
+    time: 交易日期
+    amount: 交易金额             # 正=收入 负=支出；若收支分列改用 income/expense
+    counterparty: 对方户名
+    description: 摘要
+    method: 交易渠道
+  time_format: "%Y%m%d"

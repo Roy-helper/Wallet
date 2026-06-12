@@ -1,0 +1,10 @@
+# 原始账单与数据库包含敏感信息，默认不入库
+/inbox/*
+!/inbox/.gitkeep
+/data/
+
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/

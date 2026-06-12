@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallet · 个人财务仪表盘</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root { --bg:#10141a; --card:#1a212b; --text:#e8edf4; --muted:#8b97a8; --accent:#4fc08d; --red:#e26d6d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family: "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:20px 28px; display:flex; align-items:baseline; gap:16px; }
+  h1 { font-size:20px; margin:0; }
+  header span { color:var(--muted); font-size:13px; }
+  .grid { display:grid; gap:16px; padding:0 28px 28px;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+  .card { background:var(--card); border-radius:12px; padding:18px 20px; }
+  .card h2 { font-size:14px; color:var(--muted); margin:0 0 12px; font-weight:500; }
+  .kpis { display:flex; gap:32px; flex-wrap:wrap; }
+  .kpi b { display:block; font-size:24px; font-weight:600; }
+  .kpi label { color:var(--muted); font-size:12px; }
+  .kpi .up { color:var(--accent); } .kpi .down { color:var(--red); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #232c38; }
+  td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+  tr:hover td { background:#202938; }
+  .full { grid-column: 1 / -1; }
+  canvas { max-height: 280px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Wallet 财务仪表盘</h1>
+  <span id="subtitle"></span>
+</header>
+
+<div class="grid">
+  <div class="card full"><div class="kpis" id="kpis"></div></div>
+  <div class="card full"><h2>近 12 个月收支趋势</h2><canvas id="trendChart"></canvas></div>
+  <div class="card"><h2 id="catTitle">本月支出分类</h2><canvas id="catChart"></canvas></div>
+  <div class="card"><h2>资产配置</h2><canvas id="allocChart"></canvas></div>
+  <div class="card full"><h2>净资产曲线</h2><canvas id="networthChart"></canvas></div>
+  <div class="card full"><h2>最近交易</h2>
+    <table id="txnTable">
+      <thead><tr><th>时间</th><th>对方</th><th>描述</th><th>分类</th><th class="num">金额</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const yuan = c => '¥' + (c / 100).toLocaleString('zh-CN', {minimumFractionDigits: 2});
+const colors = ['#4fc08d','#5b9bd5','#e2c06d','#e26d6d','#9b7ede','#5ec8c8',
+                '#d58b5b','#7ea0c4','#c46d9c','#8fbf6d','#b0b8c4','#6d8ce2'];
+Chart.defaults.color = '#8b97a8';
+Chart.defaults.borderColor = '#232c38';
+
+async function api(p) { const r = await fetch(p); return r.json(); }
+
+(async () => {
+  const trend = await api('/api/trend?months=12');
+  const ym = trend.length ? trend[trend.length-1].ym : new Date().toISOString().slice(0,7);
+  document.getElementById('subtitle').textContent = '数据截至 ' + ym;
+  document.getElementById('catTitle').textContent = ym + ' 支出分类';
+
+  const [month, networth, txns] = await Promise.all([
+    api('/api/month/' + ym), api('/api/networth'), api('/api/transactions?limit=50')]);
+
+  // KPI
+  const k = document.getElementById('kpis');
+  const items = [
+    ['本月收入', yuan(month.income_cents), 'up'],
+    ['本月支出', yuan(month.expense_cents), 'down'],
+    ['本月结余', yuan(month.balance_cents), month.balance_cents >= 0 ? 'up' : 'down'],
+    ['储蓄率', month.savings_rate != null ? (month.savings_rate*100).toFixed(1)+'%' : '—', ''],
+    ['净资产', month.net_worth_cents != null ? yuan(month.net_worth_cents) : '未录入', ''],
+    ['未分类', month.uncategorized_count + ' 笔', month.uncategorized_count ? 'down' : ''],
+  ];
+  k.innerHTML = items.map(([l,v,c]) =>
+    `<div class="kpi"><b class="${c}">${v}</b><label>${l}</label></div>`).join('');
+
+  // 收支趋势
+  new Chart(trendChart, { type:'bar', data: {
+    labels: trend.map(t => t.ym),
+    datasets: [
+      { label:'收入', data: trend.map(t => t.income/100), backgroundColor:'#4fc08d' },
+      { label:'支出', data: trend.map(t => t.expense/100), backgroundColor:'#e26d6d' },
+      { label:'结余', type:'line', data: trend.map(t => (t.income-t.expense)/100),
+        borderColor:'#e2c06d', tension:.3 },
+    ]}});
+
+  // 分类占比
+  new Chart(catChart, { type:'doughnut', data: {
+    labels: month.by_category.map(c => c.category),
+    datasets: [{ data: month.by_category.map(c => c.cents/100), backgroundColor: colors }],
+  }, options: { plugins: { legend: { position:'right' } } }});
+
+  // 资产配置
+  const names = {cash:'现金/活期',deposit:'定期',fund:'基金',stock:'股票',bond:'债券',
+                 gold:'黄金',insurance:'保险',real_estate:'房产',crypto:'加密资产',other:'其他'};
+  new Chart(allocChart, { type:'doughnut', data: {
+    labels: networth.allocation.map(a => names[a.asset_class] || a.asset_class),
+    datasets: [{ data: networth.allocation.map(a => a.cents/100), backgroundColor: colors }],
+  }, options: { plugins: { legend: { position:'right' } } }});
+
+  // 净资产曲线
+  new Chart(networthChart, { type:'line', data: {
+    labels: networth.history.map(h => h.date),
+    datasets: [{ label:'净资产', data: networth.history.map(h => h.cents/100),
+                 borderColor:'#4fc08d', fill:true, backgroundColor:'rgba(79,192,141,.12)', tension:.3 }],
+  }});
+
+  // 交易明细
+  document.querySelector('#txnTable tbody').innerHTML = txns.map(t => `
+    <tr><td>${t.time.slice(0,16)}</td><td>${t.counterparty||''}</td>
+        <td>${(t.description||'').slice(0,24)}</td><td>${t.category}</td>
+        <td class="num" style="color:${t.amount_cents>=0?'#4fc08d':'#e8edf4'}">${yuan(t.amount_cents)}</td></tr>`
+  ).join('');
+})();
+</script>
+</body>
+</html>
